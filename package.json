@@ -1,6 +1,6 @@
 {
   "name": "ally-vibe-control",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "type": "module",
   "description": "Vibration intensity control for the ROG Xbox Ally X",
   "scripts": {

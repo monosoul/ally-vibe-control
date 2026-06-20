@@ -13,6 +13,10 @@ import { callable, definePlugin } from "@decky/api";
 declare const SP_REACT: any;
 const { useState, useRef, useEffect, useCallback } = SP_REACT;
 
+// SteamClient is a global injected by the Steam client runtime. We use it to
+// subscribe to resume-from-suspend events so we can re-apply intensity on wake.
+declare const SteamClient: any;
+
 // Module-level cache: survives component remounts within the same plugin session.
 // Decky unmounts the panel component each time the user closes the QAM, so
 // useState(50) would re-initialize every visit without this cache.
@@ -44,6 +48,10 @@ const getSysfsPath = callable<[], { path: string | null; found: boolean }>(
 
 const testVibration = callable<[duration_ms: number], { success: boolean; error?: string }>(
   "test_vibration"
+);
+
+const reapplyIntensity = callable<[], { success: boolean; left: number; right: number }>(
+  "reapply_intensity"
 );
 
 // ------------------------------------------------------------------ //
@@ -346,7 +354,8 @@ const AllyVibeControl = () => {
             Trigger (impulse) vibration cannot be controlled via sysfs at this
             time — this is a known kernel limitation tracked in Valve issue
             #12673. Only the grip motors are affected by these sliders.
-            Settings persist across reboots.
+            Settings persist across reboots and are re-applied automatically
+            after waking from sleep.
           </div>
         </PanelSectionRow>
       </PanelSection>
@@ -359,11 +368,29 @@ const AllyVibeControl = () => {
 // ------------------------------------------------------------------ //
 
 export default definePlugin(() => {
+  // On resume from suspend the device re-enumerates and the asus_ally_hid
+  // driver resets vibration_intensity to its default (max). The saved settings
+  // and the UI are unaffected, so the motors silently run at full strength
+  // until the value is re-written. Re-apply it automatically on wake.
+  //
+  // Registered here at the plugin root (not inside the panel component) so it
+  // stays active even when the Quick Access Menu is closed and the panel has
+  // unmounted.
+  const resumeRegistration = SteamClient?.System?.RegisterForOnResumeFromSuspend?.(
+    () => {
+      reapplyIntensity().catch((e) =>
+        console.error("[ally-vibe] resume reapply failed", e)
+      );
+    }
+  );
+
   return {
     name: "Ally Vibe Control",
     titleView: <span>Ally Vibe Control</span>,
     content: <AllyVibeControl />,
     icon: <span>📳</span>,
-    onDismount() {},
+    onDismount() {
+      resumeRegistration?.unregister?.();
+    },
   };
 });

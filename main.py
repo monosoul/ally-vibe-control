@@ -119,6 +119,38 @@ class Plugin:
     async def _unload(self):
         decky.logger.info("[ally-vibe] unloaded")
 
+    async def reapply_intensity(self) -> dict:
+        """
+        Re-write the saved intensity to the hardware.
+
+        Called from the frontend on resume from suspend. On wake the device
+        re-enumerates and the asus_ally_hid driver resets vibration_intensity
+        to its default (max), while our saved settings are untouched. The UI
+        still shows the saved value but the motors are running at full strength
+        until something re-writes the sysfs endpoint. This restores it.
+
+        The hidraw node may take a moment to re-enumerate after wake, so retry
+        a few times before giving up.
+        """
+        settings.read()
+        left = _clamp(settings.getSetting(SETTINGS_KEY_LEFT, DEFAULT_INTENSITY))
+        right = _clamp(settings.getSetting(SETTINGS_KEY_RIGHT, DEFAULT_INTENSITY))
+
+        ok = False
+        for attempt in range(5):
+            ok = _write_intensity(left, right)
+            if ok:
+                break
+            decky.logger.info(
+                f"[ally-vibe] reapply attempt {attempt + 1} failed, retrying"
+            )
+            await asyncio.sleep(1.0)
+
+        decky.logger.info(
+            f"[ally-vibe] resume reapply - L={left} R={right} ok={ok}"
+        )
+        return {"success": ok, "left": left, "right": right}
+
     # ---- RPC surface (called from TypeScript) --------------------- #
 
     async def get_intensity(self) -> dict:
