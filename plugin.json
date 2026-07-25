@@ -5,7 +5,7 @@
   "flags": ["root"],
   "publish": {
     "tags": ["utilities", "hardware", "controller"],
-    "description": "Control vibration intensity on the ROG Xbox Ally X. Writes to the asus_ally_hid sysfs endpoint and persists the setting across reboots.",
+    "description": "Control per-motor vibration intensity (grips + triggers) on the ROG Xbox Ally X. Writes the 4-channel ASUS vibe-intensity HID report directly to the controller and persists the setting across reboots.",
     "image": "https://raw.githubusercontent.com/your-user/ally-vibe-control/main/assets/preview.png"
   }
 }
