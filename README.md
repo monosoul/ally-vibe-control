@@ -1,19 +1,18 @@
 # Ally Vibe Control
 
-A [Decky Loader](https://decky.xyz) plugin for the **ROG Xbox Ally X** that lets you dial in exactly how hard the grip motors vibrate — or turn them off entirely. SteamOS gives you no built-in control over this; motors default to 100% which many people find uncomfortably strong.
+A [Decky Loader](https://decky.xyz) plugin for the **ROG Xbox Ally X** that lets you dial in exactly how hard each of the four rumble motors vibrates — the two **grips** *and* the two **impulse triggers** — or turn any of them off entirely. SteamOS gives you no per-motor control over this; motors default to full strength, which many people find uncomfortably strong.
 
-Settings persist across reboots.
+Settings persist across reboots and are re-applied on wake from sleep.
 
 ---
 
 ## Features
 
-- **Single slider** — link both motors and control them together
-- **Split control** — set left and right motors independently
-- **Quick presets** — disable vibration (0%), restore default (50%), or go full intensity (100%)
-- **Test button** — fire a 0.5-second rumble so you can feel the current setting before committing
-- **Driver status** — green dot when the `asus_ally_hid` sysfs endpoint is detected, red if not
-- **Persistent** — your chosen intensity is written back to the hardware on every Decky startup
+- **Grip motors** — link left/right together, or set them independently
+- **Trigger motors** — independent intensity for the two impulse-trigger motors (previously uncontrollable on Linux)
+- **Test button** — fires a short rumble across all four motors at the current settings so you can feel the result before committing
+- **Device status** — green dot when the Ally X config HID interface is detected, red if not
+- **Persistent** — your chosen intensities are written back to the hardware on every Decky startup and re-applied after resume from suspend
 
 ---
 
@@ -21,12 +20,12 @@ Settings persist across reboots.
 
 | Requirement | Details |
 |---|---|
-| Device | ROG Xbox Ally X |
-| OS | SteamOS 3.7 or later |
-| Kernel driver | `asus_ally_hid` (included in SteamOS 3.7+) |
+| Device | ROG Xbox Ally X (USB `0B05:1B4C`) |
+| OS | SteamOS / any Linux with Decky Loader |
 | Plugin loader | [Decky Loader](https://decky.xyz) |
+| Permissions | Runs as root (required for `hidraw` writes) |
 
-> **Ally (non-X) / other devices** — the plugin will load but the Driver Status indicator will show red if your kernel doesn't expose the `asus_ally_hid` sysfs endpoint.
+> The plugin talks to the controller directly over `hidraw`, so it does **not** depend on any particular kernel driver version or sysfs endpoint. The controller must be connected in gamepad mode.
 
 ---
 
@@ -69,41 +68,38 @@ Requires Node.js 16.14+ and pnpm v9 (`npm install -g pnpm@9`).
 
 Open the **Quick Access Menu** and tap the 📳 icon.
 
-**Linked mode (default)**
-The toggle at the top keeps both motors in sync. Move the single slider to set intensity for both grips at once.
+**Grip Motors**
+The "Link left/right grip" toggle keeps both grips in sync (single slider). Toggle it off to reveal separate left/right sliders — useful if one grip feels stronger than the other, or you prefer an asymmetric feel.
 
-**Split mode**
-Toggle off "Link both motors" to reveal separate sliders for left and right. Useful if one grip feels stronger than the other, or you just prefer an asymmetric feel.
+**Trigger Motors**
+Same layout for the two impulse-trigger motors. Set them lower than the grips (or to 0) if you find trigger buzz distracting, or crank them up for stronger trigger feedback.
 
-**Test Vibration**
-Fires a short rumble at the current intensity so you can feel the result without having to launch a game. Adjust → test → repeat until it feels right.
+**Test**
+Fires a short rumble across all four motors at the current settings so you can feel the result without launching a game. Adjust → test → repeat until it feels right.
 
-**Disable / Full / Reset**
-Three quick-action buttons at the bottom:
-- **Disable vibration (0%)** — kills motors entirely
-- **Full intensity (100%)** — restores factory behavior
-- **Reset to 50% (default)** — the recommended starting point
+**Reset to 100%**
+Restores every motor to full strength (factory behavior).
 
 ---
 
 ## How it works
 
-The plugin writes to the `asus_ally_hid` kernel driver's sysfs endpoint:
+The plugin sends the ASUS MCU vibration-intensity command directly to the controller's config HID interface as a **Feature report**:
 
 ```
-/sys/module/hid_asus_ally/drivers/hid:asus_rog_ally/*/vibration_intensity
+byte0: 0x5A   report id      (FEATURE_ROG_ALLY_REPORT_ID)
+byte1: 0xD1   code page      (FEATURE_ROG_ALLY_CODE_PAGE)
+byte2: 0x06   command        (set vibration intensity)
+byte3: 0x04   length         (4 channels)
+byte4: left  grip     intensity (0-100)
+byte5: right grip     intensity (0-100)
+byte6: left  trigger  intensity (0-100)
+byte7: right trigger  intensity (0-100)
 ```
 
-The value is a pair of integers (`LEFT RIGHT`, each 0–100) that scale the motor output. The plugin runs as root (required for sysfs writes) and uses Decky's `SettingsManager` to persist your chosen values so they are restored on every boot.
+The stock `hid_asus_ally` driver only sends two channels (grips). The MCU firmware also honors a four-channel form, which adds independent scaling for the two impulse-trigger motors — this value persistently scales the rumble the gamepad plays, so it tunes in-game vibration strength per motor.
 
-A fallback glob (`/sys/class/hidraw/*/device/vibration_intensity`) is tried if the primary path isn't found, since hidraw node numbers aren't stable across reboots.
-
----
-
-## Known limitations
-
-**Trigger / impulse vibration is not controllable.**
-The grip motors (the ones that hum continuously during gameplay) are fully controllable. The trigger click-vibration is a separate hardware path that the kernel driver does not yet expose via sysfs. This is a known upstream limitation tracked in [Valve issue #12673](https://github.com/ValveSoftware/steam-for-linux/issues/12673). When kernel support lands, this plugin will be updated.
+The correct `hidraw` node is discovered by scanning each interface's HID report descriptor for report ID `0x5A`, so it survives `hidraw` node renumbering across reboots. The **Test** button uses the live force-feedback report (`0x0D`) to drive the motors directly, since the `0x06` intensity command is a silent scaler and produces no felt buzz on its own. The plugin runs as root (required for `hidraw` writes) and uses Decky's `SettingsManager` to persist your values.
 
 ---
 
@@ -112,43 +108,34 @@ The grip motors (the ones that hum continuously during gameplay) are fully contr
 ### Plugin doesn't appear in the Quick Access Menu
 
 ```bash
-# Check the plugin is in the right place
-ls ~/homebrew/plugins/ally-vibe-control/
-
-# Check the frontend bundle exists
-ls ~/homebrew/plugins/ally-vibe-control/dist/index.js
-
-# Check Decky is running
-systemctl status plugin_loader
-
-# Restart Decky
-systemctl --user restart plugin_loader
+ls ~/homebrew/plugins/ally-vibe-control/          # plugin present?
+ls ~/homebrew/plugins/ally-vibe-control/dist/index.js   # frontend bundle present?
+systemctl status plugin_loader                    # Decky running?
+systemctl --user restart plugin_loader            # restart Decky
 ```
 
-### Driver Status shows a red dot
+### Device Status shows a red dot
+
+The plugin couldn't find a `hidraw` node for the Ally X config interface (VID `0B05` / PID `1B4C`, report `0x5A`). Confirm the controller is connected in gamepad mode:
 
 ```bash
-# Check the driver is loaded
-lsmod | grep asus_ally
-
-# Check the sysfs path exists
-ls /sys/module/hid_asus_ally/drivers/hid:asus_rog_ally/*/vibration_intensity 2>/dev/null
-ls /sys/class/hidraw/*/device/vibration_intensity 2>/dev/null
+# List Ally X hidraw interfaces and their report IDs
+for rd in /sys/class/hidraw/hidraw*/device/report_descriptor; do
+  ue=$(cat "${rd%/*}/uevent")
+  case "$ue" in *0B05*1B4C*)
+    echo "/dev/$(echo "$rd" | cut -d/ -f5): $(grep -o 'HID_ID=[^ ]*' <<<"$ue")" ;;
+  esac
+done
 ```
-
-If the driver is missing, check your kernel version (`uname -r`). SteamOS 3.7+ on Ally hardware should include it.
 
 ### Sliders move but vibration doesn't change
 
 ```bash
-# Test the sysfs write manually as root (adjust hidraw number as needed)
-echo "30 30" | sudo tee /sys/class/hidraw/hidraw2/device/vibration_intensity
-
 # Check plugin logs
 sudo cat ~/homebrew/logs/ally-vibe-control/*.log | tail -30
 ```
 
-If the manual write works but the plugin doesn't, verify `plugin.json` contains `"flags": ["root"]`.
+Verify `plugin.json` contains `"flags": ["root"]` (needed for `hidraw` writes). Note the intensity is a *scaler* on game rumble — to feel it change, use the **Test** button or trigger rumble in a game; setting intensity alone does not buzz.
 
 ---
 
